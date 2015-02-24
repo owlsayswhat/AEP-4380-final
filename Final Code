@@ -1,0 +1,510 @@
+/* AEP 4380 FINAL
+
+Due 12/15/2015
+
+Uses the Nelder-Mead Method in order to find a set of point charge locations that causes the trajector to hit 2-3 destination points.
+
+Run on Mac OSX with Intel core i7 with GNU GCC using CodeBlocks.
+
+J. Ojalvo 12-Dec-2014
+
+*/
+
+#include <cstdlib>  // plain C
+#include <cmath>
+#include <iostream> // stream IO
+#include <fstream>  // stream file IO
+#include <iomanip>  // to format the output
+#include <sstream>
+
+#include <ctime>
+#include <time.h>
+#include "nr3.h"
+#include "ran.h"
+
+using namespace std;
+
+void odeak(double* yold, double* ynew, double* h, double* hnew, double emax, double t, int neqns,double* Qx, double* Qy, void frhs(double*, double, double*, double*, double*)){
+
+    int i;
+    double * k1, * k2, * k3, * k4, * k5, *k6, * temp, * dydxnew, * err, * yerr, * scale, maxx;
+    double c2=0.2,c3=0.3,c4=0.8,c5=8.0/9.0, c6=1.0, c7=1.0, a21=0.2,a31=3.0/40.0, a32=9.0/40.0,a41=44.0/45.0,a42=-56.0/15.0,a43=32.0/9.0;
+    double a51=19372.0/6561.0, a52=-25360.0/2187.0,a53=64448.0/6561.0,a54=-212.0/729.0,a61=9017.0/3168.0;
+    double a62=-355.0/33.0,a63=46732.0/5247.0,a64=49.0/176.0,a65=-5103.0/18656.0, a71=35.0/384.0,a73=500.0/1113.0;
+    double a74=125.0/192.0,a75=-2187.0/6784.0, a76=11.0/84.0,e1=71.0/57600.0,e3=-71.0/16695.0,e4=71.0/1920.0;
+    double e5=-17253.0/339200.0,e6=22.0/525.0,e7=-1.0/40.0;
+
+    //set up k1 vector
+    k1 = new double[11*neqns];
+    k2 = k1+neqns;
+    k3 = k2+neqns;
+    k4 = k3+neqns;
+    k5 = k4+neqns;
+    k6 = k5+neqns;
+    temp = k6+neqns;
+    dydxnew = temp+neqns;
+    yerr = dydxnew+neqns;
+    err = yerr+neqns;
+    scale = err+neqns;
+
+    if(NULL==k1){
+        cout<<"error in ODEAK"<<endl;
+        return;
+    }
+    do{
+
+     //Find values of 8 ks.
+    frhs(yold, t, k1,Qx, Qy);
+    for(i=0; i<neqns; i++){
+        temp[i] = yold[i]+*h*a21*k1[i];
+    }
+
+    frhs(temp, t+c2**h, k2,Qx, Qy);
+    for(i=0; i<neqns; i++){
+        temp[i] = yold[i]+*h*(a31*k1[i]+a32*k2[i]);
+    }
+
+    frhs(temp, t+c3**h, k3,Qx, Qy);
+    for(i=0; i<neqns; i++){
+        temp[i] = yold[i]+*h*(a41*k1[i]+a42*k2[i]+a43*k3[i]);
+    }
+
+    frhs(temp, t+c4**h, k4,Qx, Qy);
+    for(i=0; i<neqns; i++){
+        temp[i] = yold[i]+*h*(a51*k1[i]+a52*k2[i]+a53*k3[i]+a54*k4[i]);
+    }
+
+    frhs(temp, t+c5**h, k5,Qx, Qy);
+    for(i=0; i<neqns; i++){
+        temp[i] = yold[i]+*h*(a61*k1[i]+a62*k2[i]+a63*k3[i]+a64*k4[i]+a65*k5[i]);
+    }
+
+    frhs(temp,t+c6**h,k6,Qx, Qy);
+     //solution for y(t+h)
+    for(i=0;i<neqns;i++){
+        ynew[i]= yold[i]+*h*(a71*k1[i]+a73*k3[i]+a74*k4[i]+a75*k5[i]+a76*k6[i]);
+    }
+
+    frhs(ynew, t+c7**h,dydxnew,Qx,Qy);
+    for(i=0;i<neqns;i++){
+        yerr[i]=*h*(e1*k1[i]+e3*k3[i]+e4*k4[i]+e5*k5[i]+e6*k6[i]+e7*dydxnew[i]);  //Based on code for stepperdopr5.h
+    }
+     //Find scale vector
+    for(i=0; i<neqns; i++){
+        scale[i] = yold[i] + *h*k1[i]+emax;
+    }
+
+    //error estimation
+    for(i=0; i<neqns;i++){
+        err[i] = abs(yerr[i])/scale[i];
+    }
+    //Find max error
+    maxx=err[0];
+    for(i=1;i<neqns;i++){
+        if (maxx<abs(err[i])){
+            maxx=abs(err[i]);
+        }
+    }
+    //update h and ynew if needed.
+    if(2.0*maxx < emax){
+        *hnew=*h*pow(emax/maxx,0.2);
+    }
+    else if(maxx > emax){
+        *h=*h/5.0;
+    }
+    }while(abs(maxx)>emax);
+    //do while
+
+    delete[] k1;
+    return;
+}//end ODEAK
+
+//Constants for electronic system
+const int nobj=1;
+const int nc=3; //number of moveable point charges
+const int N=2*2*nobj;
+const double m=1; //Mass point charge
+const double eps=pow(8.85,-12);
+const double q=-1.0; //moving charge
+//stationary charges
+const double Q[]={.000002,.000002,.000002};
+
+const int ndim=6; //number of parameters
+const double PI=3.14159;
+const double emax=pow(10.0,-8);
+
+//electronic system
+void myrhs(double* y, double t, double* f, double* Qx, double* Qy){
+
+    double qk, dij, dijc;
+    int i, k, xo=0, yo=nobj, vxo=2*nobj, vyo=3*nobj;
+    //Loop over test charges
+    for(i=0;i<nobj;i++){
+            f[i+vxo]=0.0;
+            f[i+vyo]=0.0;
+        for(k=0;k<nc;k++){
+            qk=1/(4.0*PI*eps)*q*Q[k];
+            dij=sqrt( (y[i]-Qx[k])*(y[i]-Qx[k])+(y[i+yo]-Qy[k])*(y[i+yo]-Qy[k]) ); //Distance calculation
+            dijc=dij*dij*dij;
+            //x and y accel
+            f[i+vxo]=f[i+vxo]+qk*(-Qx[k]+y[i])/(dijc);
+            f[i+vyo]=f[i+vyo]+qk*(-Qy[k]+y[i+yo])/(dijc);
+        }
+        f[i]=y[i+vxo];
+        f[i+yo]=y[i+vyo];
+    }
+    return;
+}//end myrhs
+
+//Minimum distance calculator. Takes as inputs the positions of the three point charges
+double calculator(double x1, double x2, double x3, double y1, double y2, double y3)
+{
+    int i;
+    double * yold, * ynew, * Qy, * Qx, * h, * hnew, maxt=0.1;
+    double t, tinit=0.0, dist,  destx=1.0, desty=5.0, mindist=sqrt(destx*destx+desty*desty), destx1=5.0, desty1=1.0, mindist1=sqrt(destx1*destx1+desty1*desty1);
+    double dist1, dist2, dist3, mdist1, mdist2;
+    double destx2=4.0, desty2=3.0, mindist2=sqrt(destx2*destx2+desty2*desty2);
+    //Iniitalize yold and ynew
+    yold= new double[N];
+    ynew= new double[N];
+    h= new double;
+    hnew= new double;
+    *h=0.01;
+    *hnew=0.01;
+
+    if(NULL==ynew||NULL==yold||NULL==h||NULL==hnew){
+        cout<<"error in calculator"<<endl;
+        return;
+    }
+    //Initial Conditions
+    yold[0]=0.0;
+    yold[1]=0.0;
+    yold[2]=0.0;
+    yold[3]=0.0;
+    //Begin solution for myrhs
+
+    t=tinit;
+    Qy= new double[3];
+    Qx= new double[3];
+    if(NULL==Qy||NULL==Qx){
+        cout<<"error in calculator"<<endl;
+        return;
+    }
+    Qy[0]=y1;
+    Qy[1]=y2;
+    Qy[2]=y3;
+
+    Qx[0]=x1;
+    Qx[1]=x2;
+    Qx[2]=x3;
+    //Distance calculations for the three point charges (dist1, dist2, dist3), and destination points (dist, mdist1, mdist2)
+    dist1 = sqrt( (yold[0]-Qx[0])*(yold[0]-Qx[0])+(yold[0+nobj]-Qy[0])*(yold[0+nobj]-Qy[0]) );
+    dist2 = sqrt( (yold[0]-Qx[1])*(yold[0]-Qx[1])+(yold[0+nobj]-Qy[1])*(yold[0+nobj]-Qy[1]) );
+    dist3 = sqrt( (yold[0]-Qx[2])*(yold[0]-Qx[2])+(yold[0+nobj]-Qy[2])*(yold[0+nobj]-Qy[2]) );
+    dist  = sqrt( (yold[0]-destx)*(yold[0]-destx)+(yold[0+nobj]-desty)*(yold[0+nobj]-desty) );
+    mdist1 = sqrt( (yold[0]-destx1)*(yold[0]-destx1)+(yold[0+nobj]-desty1)*(yold[0+nobj]-desty1) );
+    mdist2 = sqrt( (yold[0]-destx2)*(yold[0]-destx2)+(yold[0+nobj]-desty2)*(yold[0+nobj]-desty2) );
+
+    //If the trajectory gets too close to one of these points, quit.
+    double epsilon=.000001;
+
+    //solve for the trajectory
+    while(  abs(t)<maxt && dist1>epsilon && dist2>epsilon && dist3>epsilon && dist>epsilon ) {
+        odeak(yold, ynew, h, hnew, emax, t, N, Qx, Qy, myrhs);
+        t=t+*h;
+        *h=*hnew;
+
+        for(i=0;i<N;i++){
+            yold[i]=ynew[i];
+        }
+        //Update distances
+        dist1 = sqrt( (yold[0]-Qx[0])*(yold[0]-Qx[0])+(yold[0+nobj]-Qy[0])*(yold[0+nobj]-Qy[0]) );
+        dist2 = sqrt( (yold[0]-Qx[1])*(yold[0]-Qx[1])+(yold[0+nobj]-Qy[1])*(yold[0+nobj]-Qy[1]) );
+        dist3 = sqrt( (yold[0]-Qx[2])*(yold[0]-Qx[2])+(yold[0+nobj]-Qy[2])*(yold[0+nobj]-Qy[2]) );
+        dist  = sqrt( (yold[0]-destx)*(yold[0]-destx)+(yold[0+nobj]-desty)*(yold[0+nobj]-desty) );
+        mdist1 = sqrt( (yold[0]-destx1)*(yold[0]-destx1)+(yold[0+nobj]-desty1)*(yold[0+nobj]-desty1) );
+        mdist2 = sqrt( (yold[0]-destx2)*(yold[0]-destx2)+(yold[0+nobj]-desty2)*(yold[0+nobj]-desty2) );
+        //update minimum distances
+        if(dist<mindist){
+            mindist=dist;
+        }
+        if(mdist1<mindist1){
+            mindist1=mdist1;
+        }
+        if(mdist2<mindist2){
+            mindist2=mdist2;
+        }
+
+    }
+
+    delete[] yold;
+    delete[] ynew;
+    delete h;
+    delete hnew;
+    delete[] Qy;
+    delete[] Qx;
+    return((mindist1+mindist+mindist2)/3.0);
+}
+
+//struct for holding trial solutions charge locations and minDist calculation
+struct params{
+    double y1, y2, y3, x1, x2, x3, minDist;
+    params(){};
+    params(double x11, double x22, double x33, double y11, double y22, double y33){
+    y1=y11;
+    y2=y22;
+    y3=y33;
+    x1=x11;
+    x2=x22;
+    x3=x33;
+    minDist=calculator(x11, x22, x33, y11, y22, y33);}
+} trial[ndim+1];
+
+int main(){
+
+    int i, k=0, n=0, maxN=1000;
+    double tempy1, tempy2, tempy3, tempx1, tempx2, tempx3, tempdist, minDist, maxDist;
+    double calculator(double, double, double, double, double, double);
+    params centroid, refl, expa, conc;
+    double alpha=1.0, gamma=2.0, rho=-0.5, sigma=0.5;
+    double sterr, mean, sterrcheck=1e-6;
+
+    //generate random initial positions
+    time_t timer;
+    Ullong t=time(&timer);
+    Ran myran(t);
+    for(i=0;i<ndim+1;i++){
+        trial[i].y1=myran.doub()*5.0;
+        trial[i].y2=myran.doub()*5.0;
+        trial[i].y3=myran.doub()*5.0;
+        trial[i].x1=myran.doub()*5.0;
+        trial[i].x2=myran.doub()*5.0;
+        trial[i].x3=myran.doub()*5.0;
+        trial[i].minDist=calculator(trial[i].x1,trial[i].x2,trial[i].x3, trial[i].y1,trial[i].y2,trial[i].y3);
+    }
+    //find best and worst solutions
+    minDist=trial[0].minDist;
+    maxDist=trial[ndim].minDist;
+    for(i=0;i<ndim+1;i++){
+            if(trial[i].minDist<minDist){
+                tempy1=trial[i].y1;
+                tempy2=trial[i].y2;
+                tempy3=trial[i].y3;
+                tempx1=trial[i].x1;
+                tempx2=trial[i].x2;
+                tempx3=trial[i].x3;
+                tempdist=trial[i].minDist;
+
+                trial[i].y1=trial[0].y1;
+                trial[i].y2=trial[0].y2;
+                trial[i].y3=trial[0].y3;
+                trial[i].x1=trial[0].x1;
+                trial[i].x2=trial[0].x2;
+                trial[i].x3=trial[0].x3;
+                trial[i].minDist=trial[0].minDist;
+
+                trial[0].y1=tempy1;
+                trial[0].y2=tempy2;
+                trial[0].y3=tempy3;
+                trial[0].x1=tempx1;
+                trial[0].x2=tempx2;
+                trial[0].x3=tempx3;
+                trial[0].minDist=tempdist;
+                minDist=tempdist;
+            } else if(trial[i].minDist>maxDist){
+                tempy1=trial[i].y1;
+                tempy2=trial[i].y2;
+                tempy3=trial[i].y3;
+                tempx1=trial[i].x1;
+                tempx2=trial[i].x2;
+                tempx3=trial[i].x3;
+                tempdist=trial[i].minDist;
+
+                trial[i].y1=trial[ndim].y1;
+                trial[i].y2=trial[ndim].y2;
+                trial[i].y3=trial[ndim].y3;
+                trial[i].x1=trial[ndim].x1;
+                trial[i].x2=trial[ndim].x2;
+                trial[i].x3=trial[ndim].x3;
+                trial[i].minDist=trial[ndim].minDist;
+
+                trial[ndim].y1=tempy1;
+                trial[ndim].y2=tempy2;
+                trial[ndim].y3=tempy3;
+                trial[ndim].x1=tempx1;
+                trial[ndim].x2=tempx2;
+                trial[ndim].x3=tempx3;
+                trial[ndim].minDist=tempdist;
+                maxDist=tempdist;}
+    }
+    tempy1=0.0;tempy2=0.0;tempy3=0.0,tempx1=0.0;tempx2=0.0;tempx3=0.0;
+    //find mean and standard deviation
+    mean=0;
+    for(i=0;i<ndim;i++){
+        mean+=trial[i].minDist/ndim;
+    }
+    sterr=0;
+    for(i=0;i<ndim;i++){
+        sterr+=(trial[i].minDist-mean)*(trial[i].minDist-mean)/ndim;
+    }
+    sterr=sqrt(sterr);
+    cout<<"the standard error is "<<sterr<<endl;
+    cout<<"CURRENT"<<endl;
+    for(i=0;i<ndim+1;i++){
+        cout<<setprecision(30)<<trial[i].minDist<<setw(35)<<trial[i].x1<<setw(35)<<trial[i].y1<<setw(35)<<trial[i].x2<<setw(35)<<trial[i].y2<<setw(35)<<trial[i].x3<<setw(35)<<trial[i].y3<<endl;
+    }
+    cout<<"END CURRENT"<<endl;
+
+    ofstream fo; // output file using streams
+
+    fo.open( "/Users/jamesojalvo/Desktop/temp/final/chargemovement.dat" ); //convergence of best trial solution
+
+    if( fo.fail() ) { // or fp.bad()
+        cout << "cannot open file" << endl;
+        return( EXIT_SUCCESS );
+    }
+    //quit if standard error is met or reach number of max iterations
+    while(sterr>sterrcheck&&n<maxN){
+
+        tempy1=0.0;tempy2=0.0;tempy3=0.0,tempx1=0.0;tempx2=0.0;tempx3=0.0;
+        for(i=0;i<ndim;i++){
+            tempy1+=trial[i].y1/(double) ndim;
+            tempy2+=trial[i].y2/(double) ndim;
+            tempy3+=trial[i].y3/(double) ndim;
+            tempx1+=trial[i].x1/(double) ndim;
+            tempx2+=trial[i].x2/(double) ndim;
+            tempx3+=trial[i].x3/(double) ndim;
+
+        }
+        //centroid
+        centroid=params(tempx1,tempx2,tempx3,tempy1,tempy2,tempy3);
+
+        //reflection
+        refl=params(centroid.x1+alpha*(centroid.x1-trial[ndim].x1),centroid.x2+alpha*(centroid.x2-trial[ndim].x2),centroid.x3+alpha*(centroid.x3-trial[ndim].x3),centroid.y1+alpha*(centroid.y1-trial[ndim].y1),centroid.y2+alpha*(centroid.y2-trial[ndim].y2),centroid.y3+alpha*(centroid.y3-trial[ndim].y3));
+
+        //run the algorithm
+        if(refl.minDist>=trial[0].minDist&&refl.minDist<trial[ndim-1].minDist){
+            trial[ndim].y1=refl.y1;
+            trial[ndim].y2=refl.y2;
+            trial[ndim].y3=refl.y3;
+            trial[ndim].x1=refl.x1;
+            trial[ndim].x2=refl.x2;
+            trial[ndim].x3=refl.x3;
+            trial[ndim].minDist=refl.minDist;
+        } else if(refl.minDist<trial[0].minDist){
+            //expansion
+            expa=params(centroid.x1+gamma*(centroid.x1-trial[ndim].x1),centroid.x2+gamma*(centroid.x2-trial[ndim].x2),centroid.x3+gamma*(centroid.x3-trial[ndim].x3),centroid.y1+gamma*(centroid.y1-trial[ndim].y1),centroid.y2+gamma*(centroid.y2-trial[ndim].y2),centroid.y3+gamma*(centroid.y3-trial[ndim].y3));
+            if(expa.minDist<refl.minDist){
+                trial[ndim].y1=expa.y1;
+                trial[ndim].y2=expa.y2;
+                trial[ndim].y3=expa.y3;
+                trial[ndim].x1=expa.x1;
+                trial[ndim].x2=expa.x2;
+                trial[ndim].x3=expa.x3;
+                trial[ndim].minDist=expa.minDist;
+            } else{
+                trial[ndim].y1=refl.y1;
+                trial[ndim].y2=refl.y2;
+                trial[ndim].y3=refl.y3;
+                trial[ndim].x1=refl.x1;
+                trial[ndim].x2=refl.x2;
+                trial[ndim].x3=refl.x3;
+                trial[ndim].minDist=refl.minDist;}
+        } else {
+            //contraction
+            conc=params(centroid.x1+rho*(centroid.x1-trial[6].x1),centroid.x2+rho*(centroid.x2-trial[6].x2),centroid.x3+rho*(centroid.x3-trial[6].x3),centroid.y1+rho*(centroid.y1-trial[6].y1),centroid.y2+rho*(centroid.y2-trial[6].y2),centroid.y3+rho*(centroid.y3-trial[6].y3));
+            if(conc.minDist<trial[ndim].minDist){
+                trial[ndim].y1=conc.y1;
+                trial[ndim].y2=conc.y2;
+                trial[ndim].y3=conc.y3;
+                trial[ndim].x1=conc.x1;
+                trial[ndim].x2=conc.x2;
+                trial[ndim].x3=conc.x3;
+                trial[ndim].minDist=conc.minDist;
+            } else{
+                //Reduction of all but best trial solution
+                for(i=1;i<ndim+1;i++){
+                trial[i]=params(trial[0].x1+sigma*(trial[i].x1-trial[0].x1),trial[0].x2+sigma*(trial[i].x2-trial[0].x2),trial[0].x3+sigma*(trial[i].x3-trial[0].x3),trial[0].y1+sigma*(trial[i].y1-trial[0].y1),trial[0].y2+sigma*(trial[i].y2-trial[0].y2),trial[0].y3+sigma*(trial[i].y3-trial[0].y3));
+                }
+            }
+        }
+        //update best and worst trial solutions
+        minDist=trial[0].minDist;
+        maxDist=trial[ndim].minDist;
+        for(i=0;i<ndim+1;i++){
+                if(trial[i].minDist<minDist){
+                    tempy1=trial[i].y1;
+                    tempy2=trial[i].y2;
+                    tempy3=trial[i].y3;
+                    tempx1=trial[i].x1;
+                    tempx2=trial[i].x2;
+                    tempx3=trial[i].x3;
+                    tempdist=trial[i].minDist;
+
+                    trial[i].y1=trial[0].y1;
+                    trial[i].y2=trial[0].y2;
+                    trial[i].y3=trial[0].y3;
+                    trial[i].x1=trial[0].x1;
+                    trial[i].x2=trial[0].x2;
+                    trial[i].x3=trial[0].x3;
+                    trial[i].minDist=trial[0].minDist;
+
+                    trial[0].y1=tempy1;
+                    trial[0].y2=tempy2;
+                    trial[0].y3=tempy3;
+                    trial[0].x1=tempx1;
+                    trial[0].x2=tempx2;
+                    trial[0].x3=tempx3;
+                    trial[0].minDist=tempdist;
+                    minDist=tempdist;
+                } else if(trial[i].minDist>maxDist){
+                    tempy1=trial[i].y1;
+                    tempy2=trial[i].y2;
+                    tempy3=trial[i].y3;
+                    tempx1=trial[i].x1;
+                    tempx2=trial[i].x2;
+                    tempx3=trial[i].x3;
+                    tempdist=trial[i].minDist;
+
+                    trial[i].y1=trial[ndim].y1;
+                    trial[i].y2=trial[ndim].y2;
+                    trial[i].y3=trial[ndim].y3;
+                    trial[i].x1=trial[ndim].x1;
+                    trial[i].x2=trial[ndim].x2;
+                    trial[i].x3=trial[ndim].x3;
+                    trial[i].minDist=trial[ndim].minDist;
+
+                    trial[ndim].y1=tempy1;
+                    trial[ndim].y2=tempy2;
+                    trial[ndim].y3=tempy3;
+                    trial[ndim].x1=tempx1;
+                    trial[ndim].x2=tempx2;
+                    trial[ndim].x3=tempx3;
+                    trial[ndim].minDist=tempdist;
+                    maxDist=tempdist;}
+        }
+        tempy1=0.0;tempy2=0.0;tempy3=0.0,tempx1=0.0;tempx2=0.0;tempx3=0.0;
+        //mean and standard error calcualation
+        mean=0;
+        for(i=0;i<ndim;i++){
+            mean+=trial[i].minDist/ndim;
+        }
+        sterr=0;
+        for(i=0;i<ndim;i++){
+            sterr+=(trial[i].minDist-mean)*(trial[i].minDist-mean)/ndim;
+        }
+        sterr=sqrt(sterr);
+        cout<<"CURRENT"<<endl;
+        cout<<"the standard error is "<<sterr<<endl;
+        for(i=0;i<ndim+1;i++){
+            cout<<setprecision(30)<<trial[i].minDist<<setw(35)<<trial[i].x1<<setw(35)<<trial[i].y1<<setw(35)<<trial[i].x2<<setw(35)<<trial[i].y2<<setw(35)<<trial[i].x3<<setw(35)<<trial[i].y3<<endl;
+        }
+        cout<<"END CURRENT"<<endl;
+        n+=1;
+
+        fo<<trial[0].x1<<setw(15)<<trial[0].y1<<setw(15)<<trial[0].x2<<setw(15)<<trial[0].y2<<setw(15)<<trial[0].x3<<setw(15)<<trial[0].y3<<endl;
+    }
+    fo.close();
+
+    return 0;
+}//end main
